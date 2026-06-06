@@ -45,9 +45,9 @@ export default function Navbar() {
   return (
     <header className="sticky top-0 z-40 px-4 pt-4">
       <div className="mx-auto max-w-6xl panel px-4 py-3 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2 font-display font-extrabold text-xl">
-          <span className="inline-flex w-9 h-9 rounded-full bg-bird-red items-center justify-center shadow-juicy">
-            <span className="block w-3 h-3 rounded-full bg-white" />
+        <Link href="/" className="flex items-center gap-2 font-display font-extrabold text-[1.5rem] leading-none">
+          <span className="inline-flex w-10 h-10 rounded-full bg-bird-red items-center justify-center shadow-juicy">
+            <span className="block w-[0.85rem] h-[0.85rem] rounded-full bg-white" />
           </span>
           <span>Gen<span className="text-bird-red">Birds</span></span>
         </Link>
