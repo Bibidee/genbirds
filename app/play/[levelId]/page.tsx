@@ -48,6 +48,23 @@ export default function PlayLevel() {
     setAttempt(rec);
   }
 
+  // Poll localStorage for the on-chain patch on the current attempt so the
+  // modal shows the tx hash + "On chain" badge as soon as the background
+  // chain write resolves.
+  useEffect(() => {
+    if (!attempt) return;
+    const t = setInterval(() => {
+      try {
+        const all = JSON.parse(localStorage.getItem("genbirds.attempts.v2") || "[]") as AttemptRecord[];
+        const found = all.find(a => a.id === attempt.id);
+        if (found && (found.onChain !== attempt.onChain || found.txHash !== attempt.txHash || found.status !== attempt.status)) {
+          setAttempt(found);
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(t);
+  }, [attempt?.id]);
+
   return (
     <div className="px-4 py-6 mx-auto max-w-6xl">
       <div className="flex items-baseline justify-between mb-3">
@@ -106,6 +123,7 @@ export default function PlayLevel() {
         unusedBirdBonus={state?.unusedBirdBonus ?? 0}
         unusedBirds={state?.unusedBirds ?? 0}
         submitted={!!attempt}
+        attempt={attempt}
         onSubmit={submit}
         onRetry={() => { setOpen(false); setAttempt(null); setRetryKey(k => k + 1); }}
         nextHref={next ? `/play/${next.id}` : undefined}

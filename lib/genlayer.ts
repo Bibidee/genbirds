@@ -43,11 +43,10 @@ export interface AttemptRecord {
   explorerUrl?: string;
 }
 
-// Best-effort explorer URL builder. GenLayer Studio mirrors a stable URL
-// pattern; if it ever changes we just degrade to linking the contract page.
+// GenLayer Studio explorer. Override via env if it ever moves.
 const EXPLORER_BASE =
   process.env.NEXT_PUBLIC_GENLAYER_EXPLORER_BASE?.trim() ||
-  "https://studio.genlayer.com";
+  "https://explorer-studio.genlayer.com";
 
 export function explorerTxUrl(txHash?: string): string {
   if (!txHash) return `${EXPLORER_BASE}/contracts/${CONTRACT}`;
