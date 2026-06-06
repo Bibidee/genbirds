@@ -259,11 +259,10 @@ export default function GameCanvas({
     s.phase = "ended";
     s.won = won;
     if (won) {
-      // The bird that just landed the killing blow hasn't been counted in
-      // birdsUsed yet (that increments in checkPhase 700ms later). So the
-      // truly unused birds are remainingBirds - 1, floored at 0. Without this
-      // we'd refund 500 points for the bird we just fired.
-      const unused = Math.max(0, s.remainingBirds - 1);
+      // checkPhase increments birdsUsed and updates remainingBirds BEFORE
+      // calling endLevel, so the killing-blow bird is already accounted for.
+      // remainingBirds is the true count of unused birds — no -1 correction.
+      const unused = Math.max(0, s.remainingBirds);
       s.completionBonus = 1500;
       s.unusedBirdBonus = unused * 500;
       s.unusedBirds = unused;
