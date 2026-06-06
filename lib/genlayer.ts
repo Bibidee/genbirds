@@ -10,6 +10,7 @@
 import type { ReplayMeta } from "./replay";
 import type { Level } from "@/data/levels";
 import { getSessionAddress, getSessionKey } from "./wallet";
+import { genlayerStudionet, GENLAYER_RPC, GENLAYER_CHAIN_ID } from "./chains/genlayerStudionet";
 
 const CONTRACT = (process.env.NEXT_PUBLIC_GENLAYER_CONTRACT_ADDRESS || "").trim();
 const RPC = (process.env.NEXT_PUBLIC_GENLAYER_RPC_URL || "").trim();
@@ -115,56 +116,83 @@ async function getClient(): Promise<AnyClient | null> {
 
   clientPromise = (async () => {
     try {
-      // The embedded wallet IS the signer for every chain interaction.
-      // Without a session key, refuse to build a client so we never make
-      // unsigned writes by accident.
+      // The embedded wallet IS the signer. Without a session key, refuse to
+      // build a client so we never produce an unsigned write by accident.
       const pk = getSessionKey();
       if (!pk) {
         console.warn("[genlayer] no session key — wallet must be unlocked before chain calls");
         return null;
       }
 
-      // viem account from the embedded private key. genlayer-js accepts any
-      // viem-style account or a raw private key — we prefer the former so
-      // every SDK version we've seen finds a matching signature.
+      // Build a viem account + walletClient with an EXPLICIT chain. This is
+      // the canonical signing path. The chain must never be undefined.
       const { privateKeyToAccount } = await import("viem/accounts");
+      const viem = await import("viem");
       const viemAccount = privateKeyToAccount(pk);
+      const walletClient = viem.createWalletClient({
+        account: viemAccount,
+        chain: genlayerStudionet,
+        transport: viem.http(GENLAYER_RPC),
+      });
+      const publicClient = viem.createPublicClient({
+        chain: genlayerStudionet,
+        transport: viem.http(GENLAYER_RPC),
+      });
 
+      // Hard guard — required by the chain-fix spec.
+      if (!walletClient.chain) {
+        throw new Error("GenLayer write client has no chain configured");
+      }
+
+      console.log("[genlayer] signer", viemAccount.address);
+      console.log("[genlayer] chain id", walletClient.chain.id);
+      console.log("[genlayer] chain name", walletClient.chain.name);
+      console.log("[genlayer] rpc", GENLAYER_RPC);
+
+      // Try genlayer-js first — it knows how to encode contract calls for the
+      // GenLayer RPC. We pass the chain explicitly to every factory.
       // @ts-ignore optional runtime dep
       const gl: any = await import("genlayer-js").catch(() => null);
-      if (!gl) {
-        console.warn("[genlayer] genlayer-js not installed");
-        return null;
+      if (gl) {
+        const sdkAccount =
+          (gl.createAccount && safeCall(() => gl.createAccount(pk))) ||
+          (gl.privateKeyToAccount && safeCall(() => gl.privateKeyToAccount(pk))) ||
+          viemAccount;
+
+        const factories = [
+          () => gl.createClient?.({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }),
+          () => gl.createClient?.({ chain: genlayerStudionet, transport: viem.http(GENLAYER_RPC), account: sdkAccount }),
+          () => gl.createGenlayerClient?.({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }),
+          () => gl.GenLayerClient ? new gl.GenLayerClient({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }) : null,
+        ];
+        for (const f of factories) {
+          try {
+            const c = f();
+            if (c && (c.readContract || c.writeContract)) {
+              console.info("[genlayer] genlayer-js client ready, signer:", viemAccount.address);
+              return c as AnyClient;
+            }
+          } catch { /* try next */ }
+        }
+        console.warn("[genlayer] genlayer-js had no matching createClient signature, falling back to viem");
       }
 
-      // Some SDK versions want their own account wrapper; fall back to viem's.
-      const sdkAccount =
-        (gl.createAccount && safeCall(() => gl.createAccount(pk))) ||
-        (gl.privateKeyToAccount && safeCall(() => gl.privateKeyToAccount(pk))) ||
-        viemAccount;
-
-      const chain = gl.chains?.simulator ?? gl.simulator ?? gl.chains?.studionet ?? gl.studionet;
-
-      // Try the known createClient signatures. Every variant gets an account,
-      // so writes are always signed by the embedded wallet.
-      const factories = [
-        () => gl.createClient?.({ chain, endpoint: RPC, account: sdkAccount }),
-        () => gl.createClient?.({ endpoint: RPC, account: sdkAccount }),
-        () => gl.createGenlayerClient?.({ chain, endpoint: RPC, account: sdkAccount }),
-        () => gl.createGenlayerClient?.({ endpoint: RPC, account: sdkAccount }),
-        () => gl.GenLayerClient ? new gl.GenLayerClient({ endpoint: RPC, account: sdkAccount }) : null,
-      ];
-      for (const f of factories) {
-        try {
-          const c = f();
-          if (c && (c.readContract || c.writeContract)) {
-            console.info("[genlayer] client ready, signer:", viemAccount.address);
-            return c as AnyClient;
-          }
-        } catch { /* try next */ }
-      }
-      console.warn("[genlayer] no createClient signature matched the installed SDK");
-      return null;
+      // Fallback: a minimal AnyClient backed by viem. Lets us at least
+      // surface a meaningful error per call instead of silently no-op'ing.
+      return {
+        async readContract({ address, functionName, args }: any) {
+          return publicClient.readContract({
+            address, functionName, args, abi: [] as any,
+          });
+        },
+        async writeContract({ address, functionName, args }: any) {
+          // Without an ABI viem can't encode arbitrary GenLayer calls; this
+          // path mainly exists so the error message is loud and obvious.
+          return walletClient.writeContract({
+            address, functionName, args, abi: [] as any, chain: genlayerStudionet,
+          });
+        },
+      } as AnyClient;
     } catch (e) {
       console.warn("[genlayer] client init failed", e);
       return null;
