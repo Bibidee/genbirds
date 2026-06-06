@@ -4,7 +4,7 @@ import { createWallet, hasStoredWallet, importPrivateKey, isUnlocked, storedAddr
 import { getMyProfile, registerPlayer, resetClient } from "@/lib/genlayer";
 import { shortAddr } from "@/lib/utils";
 
-type Tab = "create" | "unlock" | "import";
+type Tab = "create" | "unlock" | "import" | "username";
 
 export default function WalletGate({ onReady }: { onReady?: (addr: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -30,10 +30,39 @@ export default function WalletGate({ onReady }: { onReady?: (addr: string) => vo
         setTab("create");
         setOpen(true);
       } else {
-        setOpen(false);
+        // Wallet exists and is unlocked — but do we have a username?
+        const prof = await getMyProfile();
+        if (!prof?.username) {
+          setTab("username");
+          setOpen(true);
+        } else {
+          setOpen(false);
+        }
       }
     })();
+    // Listen for "open wallet gate" requests from the navbar.
+    const onOpen = () => { setTab("username"); setOpen(true); };
+    window.addEventListener("genbirds:open-wallet-gate", onOpen as EventListener);
+    return () => window.removeEventListener("genbirds:open-wallet-gate", onOpen as EventListener);
   }, []);
+
+  async function doSetUsername() {
+    setError(null);
+    if (username.trim().length < 3 || username.trim().length > 20) {
+      return setError("Username must be 3–20 characters");
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(username.trim())) {
+      return setError("Letters, numbers, _ or - only");
+    }
+    setBusy(true);
+    try {
+      await registerPlayer(username.trim());
+      onReady?.(addr ?? "");
+      setOpen(false);
+    } catch (e: any) {
+      setError(e?.message || "Could not register");
+    } finally { setBusy(false); }
+  }
 
   async function doCreate() {
     setError(null);
@@ -106,11 +135,14 @@ export default function WalletGate({ onReady }: { onReady?: (addr: string) => vo
           </div>
         )}
 
-        <div className="flex gap-1">
-          {(["create", "unlock", "import"] as Tab[]).map(t => (
+        <div className="flex gap-1 flex-wrap">
+          {(tab === "username"
+            ? (["username"] as Tab[])
+            : (["create", "unlock", "import"] as Tab[])
+          ).map(t => (
             <button key={t} onClick={() => { setTab(t); setError(null); }}
               className={`px-3 py-1.5 rounded-xl text-sm font-bold ${tab === t ? "bg-bird-red text-white" : "bg-white/70 text-slate-700"}`}>
-              {t === "create" ? "Create" : t === "unlock" ? "Unlock" : "Import"}
+              {t === "create" ? "Create" : t === "unlock" ? "Unlock" : t === "import" ? "Import" : "Set username"}
             </button>
           ))}
         </div>
@@ -131,6 +163,19 @@ export default function WalletGate({ onReady }: { onReady?: (addr: string) => vo
             {error && <div className="text-rose-600 text-sm">{error}</div>}
             <button className="btn-primary w-full" onClick={doUnlock} disabled={busy}>
               {busy ? "Unlocking…" : "Unlock"}
+            </button>
+          </div>
+        )}
+        {tab === "username" && (
+          <div className="space-y-3">
+            <div className="text-sm text-slate-600">
+              Your wallet is set, but you don’t have a username yet. Pick one —
+              it’s what shows on the leaderboard.
+            </div>
+            <Field label="Username" value={username} onChange={setUsername} placeholder="e.g. solar_beak_42" />
+            {error && <div className="text-rose-600 text-sm">{error}</div>}
+            <button className="btn-primary w-full" onClick={doSetUsername} disabled={busy}>
+              {busy ? "Saving…" : "Register username"}
             </button>
           </div>
         )}

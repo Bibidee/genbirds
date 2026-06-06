@@ -61,11 +61,21 @@ export default function Navbar() {
         </nav>
         <div className="flex items-center gap-2">
           {addr && (
-            <Link href="/profile" className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/80 border border-white/60 text-xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="font-bold">{username || "guest"}</span>
-              <span className="font-mono text-slate-500">{shortAddr(addr)}</span>
-            </Link>
+            username ? (
+              <Link href="/profile" className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/80 border border-white/60 text-xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="font-bold">{username}</span>
+                <span className="font-mono text-slate-500">{shortAddr(addr)}</span>
+              </Link>
+            ) : (
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent("genbirds:open-wallet-gate"))}
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-sun-gb border border-yellow-300 text-xs font-bold text-[#3a2a00]"
+                title="Pick a username for the leaderboard">
+                ⚠ Set username
+                <span className="font-mono text-amber-900/70">{shortAddr(addr)}</span>
+              </button>
+            )
           )}
           <Link href="/play" className="btn-primary text-sm py-2 px-4">Play Now</Link>
         </div>
