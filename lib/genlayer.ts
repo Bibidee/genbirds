@@ -237,13 +237,30 @@ async function chainWrite(functionName: string, args: any[]): Promise<any | null
       console.warn(`[genlayer] write ${functionName} skipped — wallet locked`);
       return null;
     }
+
+    // Hard guards on the payload — fail loud rather than send garbage.
+    if (!functionName) throw new Error("writeContract functionName missing");
+    if (!CONTRACT) throw new Error("contract address missing");
+    if (!Array.isArray(args)) throw new Error("writeContract args must be an array");
+
+    const signer = getSessionAddress();
+    console.log("[genlayer] write payload", {
+      functionName,
+      args,
+      argsIsArray: Array.isArray(args),
+      contractAddress: CONTRACT,
+      signer,
+      chainId: GENLAYER_CHAIN_ID,
+      rpcUrl: GENLAYER_RPC,
+    });
+
     const c = await withTimeout(getClient(), 3000, "client init");
     if (!c?.writeContract) return null;
     const result = await withTimeout(
       c.writeContract({ address: CONTRACT, functionName, args }),
       10000, `write ${functionName}`,
     );
-    console.info(`[genlayer] write ${functionName} signed by ${getSessionAddress()} →`, result);
+    console.info(`[genlayer] write ${functionName} signed by ${signer} →`, result);
     return result;
   } catch (e) {
     console.warn("[genlayer] write failed", functionName, e);
@@ -327,24 +344,25 @@ export async function getPlayerProfile(address: string): Promise<PlayerProfile |
 // Levels
 // ---------------------------------------------------------------------------
 
-export async function registerLevel(level: Level): Promise<{ ok: boolean; via: "chain" | "local" }> {
-  // Fire-and-forget. We never block level mount on chain registration.
-  const registered = read<Record<string, boolean>>(LS_REG, {});
-  if (isContractConfigured() && !registered[level.id]) {
-    registered[level.id] = true;
-    write(LS_REG, registered);
-    chainWrite("register_level", [
-      level.id, level.hash, level.maxScore, level.birds.length, level.enemies.length, level.blocks.length,
-    ]).then(r => {
-      if (r === null) {
-        // Chain rejected — unregister so we'll retry next time.
-        const reg = read<Record<string, boolean>>(LS_REG, {});
-        delete reg[level.id];
-        write(LS_REG, reg);
-      }
-    }).catch(() => {});
-  }
+// Level registration is an OWNER/ADMIN action, not part of normal player flow.
+// We never trigger it from the player wallet during gameplay — the contract
+// owner does it once during deploy via scripts/registerLevels.ts.
+export async function registerLevel(_level: Level): Promise<{ ok: boolean; via: "local" }> {
+  // Intentionally a no-op for player flow. Kept as an export so existing
+  // callers continue to type-check; future admin code can call
+  // adminRegisterLevels() below from a trusted context.
   return { ok: true, via: "local" };
+}
+
+// Owner/admin-only: explicit, opt-in helper that the deployed app does NOT
+// invoke automatically. Run from a script or an admin page when wiring up
+// new levels. Kept here so the contract surface is documented in one place.
+export async function adminRegisterLevels(levels: Level[]): Promise<void> {
+  for (const lvl of levels) {
+    await chainWrite("register_level", [
+      lvl.id, lvl.hash, lvl.maxScore, lvl.birds.length, lvl.enemies.length, lvl.blocks.length,
+    ]);
+  }
 }
 
 // ---------------------------------------------------------------------------

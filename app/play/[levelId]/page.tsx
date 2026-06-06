@@ -22,21 +22,12 @@ export default function PlayLevel() {
 
   useEffect(() => {
     if (!level) return;
-    registerLevel(level);
-    // Retry once when the wallet unlocks later — covers the case where the
-    // level page mounts before the user unlocks their embedded wallet, so
-    // the initial register_level call was skipped.
-    let attempts = 0;
-    const t = setInterval(() => {
-      attempts++;
-      registerLevel(level);
-      if (attempts >= 4) clearInterval(t);
-    }, 4000);
+    // registerLevel is now an admin-only contract action. The player flow
+    // does NOT touch it — see lib/genlayer.ts adminRegisterLevels.
     // Reset per-level UI state so navigating between levels doesn't leak.
     setState(null);
     setAttempt(null);
     setOpen(false);
-    return () => clearInterval(t);
   }, [level?.id]);
 
   const idx = LEVELS.findIndex(l => l.id === level!.id);
