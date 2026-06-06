@@ -149,8 +149,9 @@ async function getClient(): Promise<AnyClient | null> {
       console.log("[genlayer] chain name", walletClient.chain.name);
       console.log("[genlayer] rpc", GENLAYER_RPC);
 
-      // Try genlayer-js first — it knows how to encode contract calls for the
-      // GenLayer RPC. We pass the chain explicitly to every factory.
+      // Try genlayer-js. The SDK may export its OWN chain (e.g. `simulator`
+      // / `studionet`) that we should prefer over our viem-defined one,
+      // because the SDK augments the chain object with custom RPC methods.
       // @ts-ignore optional runtime dep
       const gl: any = await import("genlayer-js").catch(() => null);
       if (gl) {
@@ -159,11 +160,21 @@ async function getClient(): Promise<AnyClient | null> {
           (gl.privateKeyToAccount && safeCall(() => gl.privateKeyToAccount(pk))) ||
           viemAccount;
 
+        // Prefer the SDK's own chain export, fall back to our viem chain.
+        const sdkChain =
+          gl.chains?.studionet ?? gl.studionet ??
+          gl.chains?.simulator ?? gl.simulator ??
+          genlayerStudionet;
+
+        console.log("[genlayer] sdk chain object:", sdkChain?.name ?? sdkChain?.id ?? sdkChain);
+
         const factories = [
+          () => gl.createClient?.({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }),
+          () => gl.createClient?.({ chain: sdkChain, transport: viem.http(GENLAYER_RPC), account: sdkAccount }),
           () => gl.createClient?.({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }),
           () => gl.createClient?.({ chain: genlayerStudionet, transport: viem.http(GENLAYER_RPC), account: sdkAccount }),
-          () => gl.createGenlayerClient?.({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }),
-          () => gl.GenLayerClient ? new gl.GenLayerClient({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }) : null,
+          () => gl.createGenlayerClient?.({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }),
+          () => gl.GenLayerClient ? new gl.GenLayerClient({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }) : null,
         ];
         for (const f of factories) {
           try {
@@ -172,9 +183,9 @@ async function getClient(): Promise<AnyClient | null> {
               console.info("[genlayer] genlayer-js client ready, signer:", viemAccount.address);
               return c as AnyClient;
             }
-          } catch { /* try next */ }
+          } catch (e) { console.warn("[genlayer] factory failed:", e); }
         }
-        console.warn("[genlayer] genlayer-js had no matching createClient signature, falling back to viem");
+        console.warn("[genlayer] no genlayer-js createClient signature matched, falling back to viem");
       }
 
       // Fallback: a minimal AnyClient backed by viem. Lets us at least
