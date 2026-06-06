@@ -124,86 +124,52 @@ async function getClient(): Promise<AnyClient | null> {
         return null;
       }
 
-      // Build a viem account + walletClient with an EXPLICIT chain. This is
-      // the canonical signing path. The chain must never be undefined.
-      const { privateKeyToAccount } = await import("viem/accounts");
-      const viem = await import("viem");
-      const viemAccount = privateKeyToAccount(pk);
-      const walletClient = viem.createWalletClient({
-        account: viemAccount,
-        chain: genlayerStudionet,
-        transport: viem.http(GENLAYER_RPC),
-      });
-      const publicClient = viem.createPublicClient({
-        chain: genlayerStudionet,
-        transport: viem.http(GENLAYER_RPC),
-      });
-
-      // Hard guard — required by the chain-fix spec.
-      if (!walletClient.chain) {
-        throw new Error("GenLayer write client has no chain configured");
-      }
-
-      console.log("[genlayer] signer", viemAccount.address);
-      console.log("[genlayer] chain id", walletClient.chain.id);
-      console.log("[genlayer] chain name", walletClient.chain.name);
-      console.log("[genlayer] rpc", GENLAYER_RPC);
-
-      // Try genlayer-js. The SDK may export its OWN chain (e.g. `simulator`
-      // / `studionet`) that we should prefer over our viem-defined one,
-      // because the SDK augments the chain object with custom RPC methods.
+      // genlayer-js 1.1.7 API:
+      //   import { createClient, createAccount } from "genlayer-js"
+      //   import { studionet } from "genlayer-js/chains"
+      //   createClient({ chain, endpoint, account })
+      // We pin the chain to the SDK's own studionet export and override the
+      // endpoint to our same-origin proxy so the browser never hits an
+      // external RPC directly.
       // @ts-ignore optional runtime dep
       const gl: any = await import("genlayer-js").catch(() => null);
-      if (gl) {
-        const sdkAccount =
-          (gl.createAccount && safeCall(() => gl.createAccount(pk))) ||
-          (gl.privateKeyToAccount && safeCall(() => gl.privateKeyToAccount(pk))) ||
-          viemAccount;
+      // @ts-ignore optional runtime dep
+      const glChains: any = await import("genlayer-js/chains").catch(() => null);
 
-        // Prefer the SDK's own chain export, fall back to our viem chain.
-        const sdkChain =
-          gl.chains?.studionet ?? gl.studionet ??
-          gl.chains?.simulator ?? gl.simulator ??
-          genlayerStudionet;
-
-        console.log("[genlayer] sdk chain object:", sdkChain?.name ?? sdkChain?.id ?? sdkChain);
-
-        const factories = [
-          () => gl.createClient?.({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }),
-          () => gl.createClient?.({ chain: sdkChain, transport: viem.http(GENLAYER_RPC), account: sdkAccount }),
-          () => gl.createClient?.({ chain: genlayerStudionet, endpoint: GENLAYER_RPC, account: sdkAccount }),
-          () => gl.createClient?.({ chain: genlayerStudionet, transport: viem.http(GENLAYER_RPC), account: sdkAccount }),
-          () => gl.createGenlayerClient?.({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }),
-          () => gl.GenLayerClient ? new gl.GenLayerClient({ chain: sdkChain, endpoint: GENLAYER_RPC, account: sdkAccount }) : null,
-        ];
-        for (const f of factories) {
-          try {
-            const c = f();
-            if (c && (c.readContract || c.writeContract)) {
-              console.info("[genlayer] genlayer-js client ready, signer:", viemAccount.address);
-              return c as AnyClient;
-            }
-          } catch (e) { console.warn("[genlayer] factory failed:", e); }
-        }
-        console.warn("[genlayer] no genlayer-js createClient signature matched, falling back to viem");
+      if (!gl || !gl.createClient) {
+        console.warn("[genlayer] genlayer-js missing or wrong version (need 1.1.7+ with createClient)");
+        return null;
       }
 
-      // Fallback: a minimal AnyClient backed by viem. Lets us at least
-      // surface a meaningful error per call instead of silently no-op'ing.
-      return {
+      const account = gl.createAccount(pk);
+      const chain = glChains?.studionet ?? gl.chains?.studionet ?? genlayerStudionet;
+
+      const client = gl.createClient({
+        chain,
+        endpoint: GENLAYER_RPC,
+        account,
+      });
+
+      console.log("[genlayer] signer", account.address);
+      console.log("[genlayer] chain id", chain?.id);
+      console.log("[genlayer] chain name", chain?.name);
+      console.log("[genlayer] rpc", GENLAYER_RPC);
+
+      if (!chain?.id) throw new Error("GenLayer client has no chain configured");
+
+      // Adapter: our internal AnyClient takes { address, functionName, args }
+      // and the genlayer-js writeContract requires `value: bigint`. We tack
+      // value: 0n on for every write because GenBirds calls are non-payable.
+      const adapter: AnyClient = {
         async readContract({ address, functionName, args }: any) {
-          return publicClient.readContract({
-            address, functionName, args, abi: [] as any,
-          });
+          return client.readContract({ address, functionName, args, jsonSafeReturn: true });
         },
         async writeContract({ address, functionName, args }: any) {
-          // Without an ABI viem can't encode arbitrary GenLayer calls; this
-          // path mainly exists so the error message is loud and obvious.
-          return walletClient.writeContract({
-            address, functionName, args, abi: [] as any, chain: genlayerStudionet,
-          });
+          return client.writeContract({ address, functionName, args, value: 0n });
         },
-      } as AnyClient;
+      };
+      console.info("[genlayer] genlayer-js client ready, signer:", account.address);
+      return adapter;
     } catch (e) {
       console.warn("[genlayer] client init failed", e);
       return null;
