@@ -39,6 +39,22 @@ export interface AttemptRecord {
   timestamp: number;
   countsForLeaderboard: boolean;
   onChain?: boolean;
+  txHash?: string;
+  explorerUrl?: string;
+}
+
+// Best-effort explorer URL builder. GenLayer Studio mirrors a stable URL
+// pattern; if it ever changes we just degrade to linking the contract page.
+const EXPLORER_BASE =
+  process.env.NEXT_PUBLIC_GENLAYER_EXPLORER_BASE?.trim() ||
+  "https://studio.genlayer.com";
+
+export function explorerTxUrl(txHash?: string): string {
+  if (!txHash) return `${EXPLORER_BASE}/contracts/${CONTRACT}`;
+  return `${EXPLORER_BASE}/tx/${txHash}`;
+}
+export function explorerContractUrl(): string {
+  return `${EXPLORER_BASE}/contracts/${CONTRACT}`;
 }
 
 export interface LeaderboardRow {
@@ -296,7 +312,7 @@ export async function submitAttempt(level: Level, replay: ReplayMeta): Promise<A
   write(LS_ATT, all);
 
   // Fire chain submission in the background. When it resolves we patch the
-  // mirrored record so future reads reflect the on-chain verdict.
+  // mirrored record so future reads reflect the on-chain verdict + tx hash.
   if (isContractConfigured()) {
     chainWrite("submit_attempt", [
       attemptId, replay.levelId, replay.levelHash,
@@ -310,9 +326,29 @@ export async function submitAttempt(level: Level, replay: ReplayMeta): Promise<A
       if (i < 0) return;
       list[i].onChain = true;
       list[i].reason += " · submitted on-chain";
-      if (typeof res === "string" && /^(VALID|INVALID|SUSPICIOUS|PENDING|NEEDS_REVIEW)$/.test(res)) {
-        list[i].status = res as Verdict;
-        list[i].countsForLeaderboard = res === "VALID";
+      // Extract a tx hash if the SDK returned one. Different genlayer-js
+      // versions return either a string, { hash }, or { transactionHash }.
+      let hash: string | undefined;
+      if (typeof res === "string" && /^0x[0-9a-fA-F]{32,}$/.test(res)) hash = res;
+      else if (typeof res === "object" && res !== null) {
+        const o = res as any;
+        hash = o.hash || o.transactionHash || o.txHash;
+      }
+      if (hash) {
+        list[i].txHash = hash;
+        list[i].explorerUrl = explorerTxUrl(hash);
+      } else {
+        // No hash returned — at least link to the contract page so the user
+        // can navigate to recent transactions.
+        list[i].explorerUrl = explorerContractUrl();
+      }
+      // Also extract verdict string from common return shapes.
+      const verdictStr =
+        typeof res === "string" ? res :
+        (res as any)?.result || (res as any)?.verdict || "";
+      if (typeof verdictStr === "string" && /^(VALID|INVALID|SUSPICIOUS|PENDING|NEEDS_REVIEW)$/.test(verdictStr)) {
+        list[i].status = verdictStr as Verdict;
+        list[i].countsForLeaderboard = verdictStr === "VALID";
       }
       write(LS_ATT, list);
     }).catch(() => {});

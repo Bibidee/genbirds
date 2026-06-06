@@ -79,26 +79,30 @@ export const LEVELS: Level[] = [
   L("2-2", "Skyscraper", "hard",
     ["ruby", "solar", "violet", "boom"],
     [
-      // Floor 1 slab + pillars
-      { x: 840, y: 588, w: 200, h: 16, kind: "stone" },
-      { x: 750, y: 530, w: 16, h: 100, kind: "wood" },
-      { x: 930, y: 530, w: 16, h: 100, kind: "wood" },
-      // Floor 2 slab + pillars
-      { x: 840, y: 472, w: 200, h: 16, kind: "stone" },
-      { x: 750, y: 414, w: 16, h: 100, kind: "wood" },
-      { x: 930, y: 414, w: 16, h: 100, kind: "wood" },
-      // Floor 3 slab + pillars
-      { x: 840, y: 356, w: 200, h: 16, kind: "stone" },
-      { x: 750, y: 298, w: 16, h: 100, kind: "ice" },
-      { x: 930, y: 298, w: 16, h: 100, kind: "ice" },
+      // Thicker pillars + center column = stable stack that only falls when hit.
+      // Floor 1
+      { x: 840, y: 588, w: 240, h: 18, kind: "stone" },
+      { x: 740, y: 528, w: 28, h: 100, kind: "stone" },
+      { x: 840, y: 528, w: 22, h: 100, kind: "wood" },
+      { x: 940, y: 528, w: 28, h: 100, kind: "stone" },
+      // Floor 2
+      { x: 840, y: 462, w: 240, h: 18, kind: "stone" },
+      { x: 760, y: 408, w: 24, h: 90, kind: "wood" },
+      { x: 920, y: 408, w: 24, h: 90, kind: "wood" },
+      // Floor 3
+      { x: 840, y: 348, w: 220, h: 18, kind: "stone" },
+      { x: 770, y: 296, w: 22, h: 86, kind: "ice" },
+      { x: 910, y: 296, w: 22, h: 86, kind: "ice" },
       // Roof
-      { x: 840, y: 240, w: 200, h: 16, kind: "stone" },
+      { x: 840, y: 240, w: 220, h: 18, kind: "stone" },
     ],
     [
-      { x: 840, y: 560, r: 18, hp: 1 },
-      { x: 840, y: 444, r: 18, hp: 1 },
-      { x: 840, y: 328, r: 20, hp: 2 },
-      { x: 840, y: 212, r: 22, hp: 2 },
+      // Enemies tucked between supports so the player has to actually aim.
+      { x: 800, y: 558, r: 18, hp: 2 },
+      { x: 880, y: 558, r: 18, hp: 2 },
+      { x: 840, y: 432, r: 20, hp: 2 },
+      { x: 840, y: 318, r: 22, hp: 3 },
+      { x: 840, y: 210, r: 24, hp: 3 },
     ]),
 ];
 

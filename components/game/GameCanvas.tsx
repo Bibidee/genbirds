@@ -90,7 +90,7 @@ export default function GameCanvas({
       // Blocks
       for (const b of level.blocks) {
         const density = b.kind === "stone" ? 0.005 : b.kind === "wood" ? 0.002 : 0.0012;
-        const body = Matter.Bodies.rectangle(b.x, b.y, b.w, b.h, { density, friction: 0.6, restitution: 0.05, label: "block" });
+        const body = Matter.Bodies.rectangle(b.x, b.y, b.w, b.h, { density, friction: 0.9, frictionStatic: 1.2, restitution: 0.0, slop: 0.02, label: "block" });
         const hp = b.kind === "stone" ? 60 : b.kind === "wood" ? 30 : 12;
         blockBodiesRef.current.set(body, { hp, kind: b.kind });
         Matter.World.add(world, body);
@@ -437,25 +437,44 @@ export default function GameCanvas({
     abilityFxRef.current = { x: body.position.x, y: body.position.y, t: performance.now(), color: s.current.color };
     const ab = s.current.ability;
     if (ab === "balanced") {
-      // Ruby Rocket — forward thrust boost so the tap always does something.
+      // Ruby Rocket — clear forward thrust + slight upward lift. Recognisable
+      // "boost" feel that's distinct from Solar's pure dash.
       const v = body.velocity;
       const len = Math.hypot(v.x, v.y) || 1;
-      Matter.Body.setVelocity(body, { x: v.x + (v.x / len) * 6, y: v.y + (v.y / len) * 4 });
+      Matter.Body.setVelocity(body, { x: v.x + (v.x / len) * 10, y: v.y + (v.y / len) * 6 - 2 });
     } else if (ab === "dash") {
+      // Solar Beak — massive horizontal dash, zeroes vertical for a flat
+      // streak across the screen. Very obvious.
       const v = body.velocity;
-      Matter.Body.setVelocity(body, { x: v.x * 2.4, y: v.y * 1.4 - 2 });
+      const dir = v.x >= 0 ? 1 : -1;
+      Matter.Body.setVelocity(body, { x: dir * 32, y: -3 });
     } else if (ab === "heavy") {
-      Matter.Body.setVelocity(body, { x: body.velocity.x, y: body.velocity.y + 10 });
+      // Violet Boulder — slam straight down. Cancels horizontal speed so it
+      // drops like a wrecking ball.
+      Matter.Body.setVelocity(body, { x: body.velocity.x * 0.3, y: 26 });
     } else if (ab === "curve") {
-      Matter.Body.setVelocity(body, { x: body.velocity.x * 0.6, y: body.velocity.y - 8 });
+      // Emerald Arc — sharp upward loop. Halves x, big negative y.
+      Matter.Body.setVelocity(body, { x: body.velocity.x * 0.4, y: -22 });
     } else if (ab === "drop") {
-      const egg = Matter.Bodies.circle(body.position.x, body.position.y + 24, 10, { density: 0.006, label: "bird" });
-      Matter.World.add(engineRef.current.world, egg);
+      // Cloud Dropper — release THREE eggs in a fan beneath the bird.
+      for (const off of [-12, 0, 12]) {
+        const egg = Matter.Bodies.circle(body.position.x + off, body.position.y + 28, 11, {
+          density: 0.012, frictionAir: 0.002, label: "bird",
+        });
+        Matter.Body.setVelocity(egg, { x: off * 0.2, y: 6 });
+        Matter.World.add(engineRef.current.world, egg);
+      }
     } else if (ab === "split") {
+      // Aqua Trio — splits into 3 visibly-separated birds with fan-out
+      // velocities and a small forward boost.
       const v = body.velocity;
-      const kids = [-0.6, 0, 0.6].map(off => {
-        const k = Matter.Bodies.circle(body.position.x, body.position.y, 12, { density: 0.003, label: "bird" });
-        Matter.Body.setVelocity(k, { x: v.x + off * 6, y: v.y + off * 3 });
+      const baseLen = Math.hypot(v.x, v.y) || 1;
+      const fx = v.x / baseLen, fy = v.y / baseLen;
+      const kids = [-1, 0, 1].map(off => {
+        const px = body.position.x + off * 14 * -fy; // perpendicular spread
+        const py = body.position.y + off * 14 * fx;
+        const k = Matter.Bodies.circle(px, py, 13, { density: 0.0035, frictionAir: 0.002, label: "bird" });
+        Matter.Body.setVelocity(k, { x: v.x * 1.1 + off * 4, y: v.y * 1.1 + off * 1.5 });
         return k;
       });
       Matter.World.remove(engineRef.current.world, body);
@@ -466,7 +485,9 @@ export default function GameCanvas({
       setTimeout(() => {
         if (!engineRef.current) return;
         const cx = body.position.x, cy = body.position.y;
-        const radius = 110;
+        const radius = 160;
+        // Show a second flash at the explosion epicenter so it's obvious.
+        abilityFxRef.current = { x: cx, y: cy, t: performance.now(), color: "#ffb43a" };
         for (const [enemy, info] of enemyBodiesRef.current) {
           const d = Math.hypot(enemy.position.x - cx, enemy.position.y - cy);
           if (d < radius) {
