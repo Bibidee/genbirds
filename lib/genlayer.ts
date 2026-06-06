@@ -103,6 +103,10 @@ let clientForAddress: string | null = null;
 
 export function resetClient() { clientPromise = null; clientForAddress = null; }
 
+function safeCall<T>(fn: () => T): T | null {
+  try { return fn(); } catch { return null; }
+}
+
 async function getClient(): Promise<AnyClient | null> {
   if (!isContractConfigured() || typeof window === "undefined") return null;
   const addr = getSessionAddress();
@@ -111,33 +115,60 @@ async function getClient(): Promise<AnyClient | null> {
 
   clientPromise = (async () => {
     try {
+      // The embedded wallet IS the signer for every chain interaction.
+      // Without a session key, refuse to build a client so we never make
+      // unsigned writes by accident.
+      const pk = getSessionKey();
+      if (!pk) {
+        console.warn("[genlayer] no session key — wallet must be unlocked before chain calls");
+        return null;
+      }
+
+      // viem account from the embedded private key. genlayer-js accepts any
+      // viem-style account or a raw private key — we prefer the former so
+      // every SDK version we've seen finds a matching signature.
+      const { privateKeyToAccount } = await import("viem/accounts");
+      const viemAccount = privateKeyToAccount(pk);
+
       // @ts-ignore optional runtime dep
       const gl: any = await import("genlayer-js").catch(() => null);
-      if (!gl) return null;
+      if (!gl) {
+        console.warn("[genlayer] genlayer-js not installed");
+        return null;
+      }
 
-      const pk = getSessionKey();
-      const account =
-        (pk && gl.createAccount && gl.createAccount(pk)) ||
-        (pk && gl.privateKeyToAccount && gl.privateKeyToAccount(pk)) ||
-        undefined;
+      // Some SDK versions want their own account wrapper; fall back to viem's.
+      const sdkAccount =
+        (gl.createAccount && safeCall(() => gl.createAccount(pk))) ||
+        (gl.privateKeyToAccount && safeCall(() => gl.privateKeyToAccount(pk))) ||
+        viemAccount;
 
       const chain = gl.chains?.simulator ?? gl.simulator ?? gl.chains?.studionet ?? gl.studionet;
 
+      // Try the known createClient signatures. Every variant gets an account,
+      // so writes are always signed by the embedded wallet.
       const factories = [
-        () => gl.createClient?.({ chain, endpoint: RPC, account }),
-        () => gl.createClient?.({ endpoint: RPC, account }),
-        () => gl.createClient?.({ endpoint: RPC }),
-        () => gl.createGenlayerClient?.({ endpoint: RPC, account }),
-        () => gl.GenLayerClient ? new gl.GenLayerClient({ endpoint: RPC, account }) : null,
+        () => gl.createClient?.({ chain, endpoint: RPC, account: sdkAccount }),
+        () => gl.createClient?.({ endpoint: RPC, account: sdkAccount }),
+        () => gl.createGenlayerClient?.({ chain, endpoint: RPC, account: sdkAccount }),
+        () => gl.createGenlayerClient?.({ endpoint: RPC, account: sdkAccount }),
+        () => gl.GenLayerClient ? new gl.GenLayerClient({ endpoint: RPC, account: sdkAccount }) : null,
       ];
       for (const f of factories) {
         try {
           const c = f();
-          if (c && (c.readContract || c.writeContract)) return c as AnyClient;
+          if (c && (c.readContract || c.writeContract)) {
+            console.info("[genlayer] client ready, signer:", viemAccount.address);
+            return c as AnyClient;
+          }
         } catch { /* try next */ }
       }
+      console.warn("[genlayer] no createClient signature matched the installed SDK");
       return null;
-    } catch { return null; }
+    } catch (e) {
+      console.warn("[genlayer] client init failed", e);
+      return null;
+    }
   })();
 
   return clientPromise;
@@ -162,9 +193,19 @@ async function chainRead(functionName: string, args: any[]): Promise<any | null>
 }
 async function chainWrite(functionName: string, args: any[]): Promise<any | null> {
   try {
+    // Guard: never write without an unlocked embedded wallet.
+    if (!getSessionKey()) {
+      console.warn(`[genlayer] write ${functionName} skipped — wallet locked`);
+      return null;
+    }
     const c = await withTimeout(getClient(), 3000, "client init");
     if (!c?.writeContract) return null;
-    return await withTimeout(c.writeContract({ address: CONTRACT, functionName, args }), 10000, `write ${functionName}`);
+    const result = await withTimeout(
+      c.writeContract({ address: CONTRACT, functionName, args }),
+      10000, `write ${functionName}`,
+    );
+    console.info(`[genlayer] write ${functionName} signed by ${getSessionAddress()} →`, result);
+    return result;
   } catch (e) {
     console.warn("[genlayer] write failed", functionName, e);
     return null;
